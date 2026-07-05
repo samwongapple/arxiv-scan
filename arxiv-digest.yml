@@ -1,0 +1,51 @@
+name: arXiv daily digest
+
+on:
+  schedule:
+    # 13:00 UTC weekdays -- after arXiv's ~00:00 UTC announcement settles.
+    # (13:00 UTC = 6:00 AM Vancouver during PDT.)
+    - cron: "0 13 * * 1-5"
+  workflow_dispatch: {}   # allows manual runs from the Actions tab
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run scan
+        run: python arxiv_scan.py --days 2
+
+      - name: Update stable pointer (latest.md)
+        run: |
+          TODAY=$(date -u +%F)
+          cp "digests/${TODAY}.md" digests/latest.md
+
+      - name: Commit digest
+        run: |
+          git config user.name  "arxiv-scan bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add digests/
+          git diff --cached --quiet || git commit -m "digest: $(date -u +%F)"
+          git push
+
+      - name: Open issue on CRITICAL
+        run: |
+          TODAY=$(date -u +%F)
+          FILE="digests/${TODAY}.md"
+          # Open an issue only if the CRITICAL section actually lists a paper.
+          if [ -f "$FILE" ] && awk '/CRITICAL/{f=1;next} /^## /{f=0} f' "$FILE" | grep -q "^###" ; then
+            gh issue create \
+              --title "CRITICAL arXiv hit ${TODAY}" \
+              --body-file "$FILE" || true
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
