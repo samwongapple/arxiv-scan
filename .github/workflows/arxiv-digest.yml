@@ -21,30 +21,23 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Run scan
+      - name: Run scan (writes digests/<date>.md and digests/latest.md)
         run: python arxiv_scan.py --days 2
-
-      - name: Update stable pointer (latest.md)
-        run: |
-          TODAY=$(date -u +%F)
-          cp "digests/${TODAY}.md" digests/latest.md
 
       - name: Commit digest
         run: |
           git config user.name  "arxiv-scan bot"
           git config user.email "actions@users.noreply.github.com"
-          git add digests/
+          git add -A digests/
           git diff --cached --quiet || git commit -m "digest: $(date -u +%F)"
           git push
 
       - name: Open issue on CRITICAL
         run: |
-          TODAY=$(date -u +%F)
-          FILE="digests/${TODAY}.md"
-          # Open an issue only if the CRITICAL section actually lists a paper.
+          FILE="digests/latest.md"
           if [ -f "$FILE" ] && awk '/CRITICAL/{f=1;next} /^## /{f=0} f' "$FILE" | grep -q "^###" ; then
             gh issue create \
-              --title "CRITICAL arXiv hit ${TODAY}" \
+              --title "CRITICAL arXiv hit $(date -u +%F)" \
               --body-file "$FILE" || true
           fi
         env:
