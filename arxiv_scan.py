@@ -74,7 +74,7 @@ CRITICAL_SCORE = 8
 RELEVANT_SCORE = 4
 
 CATEGORIES = ["quant-ph", "cond-mat.mes-hall"]
-ARXIV_API = "http://export.arxiv.org/api/query"
+ARXIV_API = "https://export.arxiv.org/api/query"
 ATOM = "{http://www.w3.org/2005/Atom}"
 MAX_RESULTS_PER_CAT = 300   # generous; quant-ph posts ~100-150/day
 REQUEST_PAUSE_S = 3         # arXiv API politeness
@@ -91,9 +91,24 @@ def fetch_recent(category: str, max_results: int) -> bytes:
         "max_results": max_results,
     })
     url = f"{ARXIV_API}?{query}"
-    req = urllib.request.Request(url, headers={"User-Agent": "arxiv-scan/1.0"})
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        return resp.read()
+    last_exc = None
+    for attempt in range(3):
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent":
+                         "arxiv-scan/1.1 (github actions; contact via repo)"})
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = resp.read()
+                print(f"  [fetch] {category}: HTTP {resp.status}, "
+                      f"{len(data)} bytes (attempt {attempt+1})")
+                return data
+        except Exception as ex:  # noqa
+            last_exc = ex
+            print(f"  [fetch] {category}: attempt {attempt+1} failed: "
+                  f"{type(ex).__name__}: {ex}")
+            time.sleep(5 * (attempt + 1))
+    raise last_exc
 
 
 def parse_feed(xml_bytes: bytes) -> list:
@@ -215,12 +230,20 @@ def main():
     for cat in CATEGORIES:
         try:
             feed = fetch_recent(cat, MAX_RESULTS_PER_CAT)
-            for e in parse_feed(feed):
+            parsed = parse_feed(feed)
+            kept = 0
+            for e in parsed:
                 if e["id"] not in seen and within_days(e["published"], args.days, now):
                     seen.add(e["id"])
                     entries.append(e)
+                    kept += 1
+            print(f"  [parse] {cat}: {len(parsed)} entries in feed, "
+                  f"{kept} within last {args.days} day(s)")
+            if parsed:
+                print(f"  [parse] {cat}: newest published = {parsed[0]['published']}")
         except Exception as ex:                       # network/parse failure
             errors.append(f"{cat}: {type(ex).__name__}: {ex}")
+            print(f"  [error] {cat}: {type(ex).__name__}: {ex}")
         time.sleep(REQUEST_PAUSE_S)
 
     if errors and not entries:
